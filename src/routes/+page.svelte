@@ -1,6 +1,8 @@
 <script lang="ts">
   import 'material-symbols/rounded.css';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { deliverDue, type OutboxDraft } from '$lib/moderator/outbox';
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import AuthPanel from '$lib/components/AuthPanel.svelte';
   import ChatList from '$lib/components/ChatList.svelte';
@@ -10,7 +12,8 @@
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import DevicesPanel from '$lib/components/DevicesPanel.svelte';
   import type { MediaKind } from '$lib/api/types';
-  import { connectBridge, connectNotificationActions } from '$lib/api/whatsmo';
+  import { connectBridge, connectNotificationActions, editMessage } from '$lib/api/whatsmo';
+  import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
   import {
     appState,
     downloadAttachment,
@@ -46,16 +49,31 @@
   let pendingAttachment: { chatId: string; file: File; kind: MediaKind; previewUrl?: string; caption: string; viewOnce: boolean } | null = null;
   let activeScreen: 'chats' | 'chat' | 'updates' | 'settings' | 'devices' = 'chats';
   let suppressHistoryPush = false;
+  let scheduledTimer: number | undefined;
+  async function sendApproved(draft: OutboxDraft): Promise<boolean> {
+    if (draft.editMessageId) {
+      await editMessage(draft.chatId, draft.editMessageId, draft.text);
+      return true;
+    }
+    const state = get(appState);
+    const quote = draft.quote ? state.messages[draft.chatId]?.find(m => m.id === draft.quote?.id) : undefined;
+    return sendMessage(draft.chatId, draft.text, { reviewed: true, quotedMessage: quote });
+  }
+
 
 
 
   onMount(() => {
+    scheduledTimer = window.setInterval(() => { void deliverDue(sendApproved); }, 15000);
+    void deliverDue(sendApproved);
+    recordDiagnostic('info', 'ui', 'page_mounted', { screen: activeScreen });
     window.history.replaceState({ screen: activeScreen }, '');
 
     const handlePopState = (event: PopStateEvent) => {
       const state = event.state as { screen?: typeof activeScreen } | null;
       suppressHistoryPush = true;
       activeScreen = state?.screen ?? 'chats';
+      recordDiagnostic('info', 'navigation', 'pop_state', { screen: activeScreen });
       suppressHistoryPush = false;
     };
 
@@ -63,10 +81,12 @@
     void requestNotifications();
     void connectBridge({
       onAuth: (payload) => {
+        recordDiagnostic('info', 'account', 'auth_status', { mode: payload.mode });
         setAuth(payload);
         if (payload.mode === 'connected') void refreshAccountDevice();
       },
       onConnection: (payload) => {
+        recordDiagnostic('info', 'account', 'connection_status', { connected: payload.connected });
         setConnection(payload);
         if (payload.connected) void refreshAccountDevice();
       },
@@ -81,17 +101,20 @@
       onReceipt: setReceipt
     }).then((cleanup) => {
       bridgeCleanup = cleanup;
+      recordDiagnostic('info', 'bridge', 'listeners_attached');
       void resumeSession();
-    });
+    }).catch((error) => recordDiagnosticError('bridge', 'listeners_failed', error));
     void connectNotificationActions((chatId) => {
       selectChat(chatId);
       activeScreen = 'chat';
       pushNavigationState();
     }).then((cleanup) => {
       notificationActionCleanup = cleanup;
-    });
+    }).catch((error) => recordDiagnosticError('notifications', 'actions_failed', error));
 
     return () => {
+      window.clearInterval(scheduledTimer);
+      recordDiagnostic('info', 'ui', 'page_unmounted');
       window.removeEventListener('popstate', handlePopState);
       bridgeCleanup?.();
       notificationActionCleanup?.();
@@ -114,6 +137,7 @@
         viewOnce: false
       };
     } catch (error) {
+      recordDiagnosticError('media', 'attachment_flow_failed', error);
       attachNotice = true;
       window.setTimeout(() => {
         attachNotice = false;
@@ -128,6 +152,7 @@
     pendingAttachment = null;
     try {
       await sendAttachment(attachment.chatId, attachment.file, {
+        reviewed: true, // user confirmed Whatsmo's attachment preview
         caption: attachment.caption,
         viewOnce: attachment.viewOnce,
         ptt: attachment.kind === 'audio',
@@ -158,12 +183,14 @@
   }
 
   function openChat(chatId: string): void {
+    recordDiagnostic('info', 'navigation', 'chat_opened');
     selectChat(chatId);
     activeScreen = 'chat';
     pushNavigationState();
   }
 
   function setScreen(screen: 'chats' | 'updates' | 'settings' | 'devices'): void {
+    recordDiagnostic('info', 'navigation', 'screen_changed', { screen });
     activeScreen = screen;
     pushNavigationState();
   }
@@ -196,6 +223,7 @@
         onBack={() => setScreen('chats')}
         onSend={(chatId, text, quoted) => sendMessage(chatId, text, { quotedMessage: quoted })}
         onRetry={retryMessage}
+        onDispatch={sendApproved}
         onDownloadMedia={downloadAttachment}
         onAttach={handleAttachment}
       />

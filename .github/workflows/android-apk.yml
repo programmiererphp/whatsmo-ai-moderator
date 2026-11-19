@@ -1,5 +1,10 @@
 name: Build Android APK
 
+# Cancel superseded builds on the same branch to avoid costly duplicate APK builds.
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -14,6 +19,8 @@ jobs:
   check:
     name: Lint & typecheck
     runs-on: ubuntu-24.04
+    env:
+      VITE_BUILD_SHA: ${{ github.sha }}
     timeout-minutes: 30
 
     steps:
@@ -76,10 +83,13 @@ jobs:
   build-apk:
     name: Build release-test APK
     runs-on: ubuntu-24.04
+    env:
+      VITE_BUILD_SHA: ${{ github.sha }}
     timeout-minutes: 90
     needs: check
     environment: release
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    # Build APKs on PRs too, so Android/Kotlin regressions are caught before merge.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request'
 
     steps:
       - name: Checkout

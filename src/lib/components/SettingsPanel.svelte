@@ -2,6 +2,9 @@
   import { appState, setShowGroupAvatars, setTheme, updatePowerFeatures } from '$lib/stores/app';
   import type { ThemeMode } from '$lib/api/types';
   import Icon from './Icon.svelte';
+  import DiagnosticsPanel from './DiagnosticsPanel.svelte';
+  import AiSettingsPanel from '$lib/ai/AiSettingsPanel.svelte';
+  let showDiagnostics = false;
 
   const modes: { value: ThemeMode; label: string; icon: string }[] = [
     { value: 'light', label: 'Light', icon: 'light_mode' },
@@ -27,6 +30,9 @@
   }
 </script>
 
+{#if showDiagnostics}
+  <DiagnosticsPanel onClose={() => (showDiagnostics = false)} />
+{:else}
 <div class="settings-panel">
   <header class="settings-header">
     <h2>Settings</h2>
@@ -148,14 +154,39 @@
     {/if}
   </section>
 
+  <section class="setting-group">
+    <h3><Icon name="bug_report" size="16px" /> Diagnostics &amp; crash reports</h3>
+    <p class="section-desc">Review startup, chat events, native errors and previous crashes. Copy a privacy-reduced report for debugging.</p>
+    <button type="button" class="diagnostics-open" on:click={() => (showDiagnostics = true)}>
+      <Icon name="terminal" size="20px" /> Open diagnostics
+    </button>
+  </section>
+
+  <AiSettingsPanel />
+
   <section class="setting-group about-section">
     <h3>About</h3>
     <p>Whatsmo Version 0.1.0</p>
     <p class="description">Rust-powered WhatsApp mobile companion.</p>
   </section>
 </div>
+{/if}
 
 <style>
+  .diagnostics-open {
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--border-color);
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: inherit;
+    font-size: 0.9rem;
+  }
+
   .settings-panel {
     display: flex;
     flex-direction: column;

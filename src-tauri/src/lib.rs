@@ -1,4 +1,5 @@
 mod contacts;
+mod diagnostics;
 mod whatsapp;
 
 use whatsapp::{
@@ -30,7 +31,9 @@ fn setup_logging(log_dir: &std::path::Path) {
 
 fn setup_panic_hook(log_dir: std::path::PathBuf) {
     panic::set_hook(Box::new(move |info| {
-        let payload = info.payload().downcast_ref::<&str>().copied().unwrap_or("unknown");
+        let payload = info.payload().downcast_ref::<&str>().copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("unknown");
         let location = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_default();
         let crash_report = format!(
             "PANIC at {}\nMessage: {}\nTimestamp: {}\n",
@@ -63,6 +66,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostics::read_native_diagnostics,
             start_qr_auth,
             request_pair_code,
             resume_saved_session,

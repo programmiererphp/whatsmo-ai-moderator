@@ -38,6 +38,8 @@ import {
   syncGroupMetadata as syncGroupMetadataApi
 } from '$lib/api/whatsmo';
 import { createMediaPreviewDataUrl, fileToBytes } from '$lib/utils/media';
+import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
+import { isModerated, queueDraft, noteIncomingMessage } from '$lib/moderator/outbox';
 
 const now = Date.now();
 const STORAGE_KEY = 'whatsmo.chat-state.v1';
@@ -916,18 +918,22 @@ export function handleContactNumberChanged(payload: ContactNumberChangedPayload)
 }
 
 export interface SendMessageOptions {
+  reviewed?: boolean;
   ephemeralOverride?: number;
   quotedMessage?: ChatMessage;
 }
 
-export async function sendMessage(chatId: string, text: string, options?: SendMessageOptions): Promise<void> {
+export async function sendMessage(chatId: string, text: string, options?: SendMessageOptions): Promise<boolean> {
   const trimmed = text.trim();
-  if (!trimmed) {
-    return;
+  if (!trimmed) return false;
+  if (isModerated(chatId) && !options?.reviewed) {
+    queueDraft(chatId, trimmed, options?.quotedMessage, get(appState).messages[chatId] || []);
+    return false;
   }
 
   const duration = options?.ephemeralOverride ?? get(appState).chatEphemeralDefaults[chatId] ?? undefined;
   const quoted = options?.quotedMessage;
+  recordDiagnostic('info', 'messaging', 'text_send_requested', { characters: trimmed.length, reply: Boolean(quoted) });
 
   const optimistic: ChatMessage = {
     id: crypto.randomUUID(),
@@ -955,13 +961,18 @@ export async function sendMessage(chatId: string, text: string, options?: SendMe
       quoted?.text
     );
     markMessageStatus(chatId, optimistic.id, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'text_send_succeeded');
+    return true;
   } catch (error) {
     markMessageStatus(chatId, optimistic.id, 'failed');
+    recordDiagnosticError('messaging', 'text_send_failed', error);
     console.error('Failed to send message', error);
+    return false;
   }
 }
 
 export interface SendAttachmentOptions {
+  reviewed?: boolean;
   caption?: string;
   viewOnce?: boolean;
   ptt?: boolean;
@@ -971,6 +982,9 @@ export interface SendAttachmentOptions {
 
 export async function sendAttachment(chatId: string, file: File, options: SendAttachmentOptions | string = ''): Promise<void> {
   const attachmentOptions: SendAttachmentOptions = typeof options === 'string' ? { caption: options } : options;
+  if (isModerated(chatId) && !attachmentOptions.reviewed) {
+    throw new Error('Coached chats require attachment review before sending.');
+  }
   if (file.size === 0) {
     throw new Error('Attachment file is empty.');
   }
@@ -984,6 +998,7 @@ export async function sendAttachment(chatId: string, file: File, options: SendAt
   }
 
   const trimmedCaption = (attachmentOptions.caption ?? '').trim();
+  recordDiagnostic('info', 'messaging', 'media_send_requested', { kind, bytes: file.size });
   const name = file.name || `${kind}-attachment`;
   const bytes = await fileToBytes(file);
   const mimeType = file.type || fallbackMimeType(kind);
@@ -1030,8 +1045,10 @@ export async function sendAttachment(chatId: string, file: File, options: SendAt
       duration
     );
     markMessageStatus(chatId, optimistic.id, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'media_send_succeeded');
   } catch (error) {
     markMessageStatus(chatId, optimistic.id, 'failed');
+    recordDiagnosticError('messaging', 'media_send_failed', error);
     console.error('Failed to send attachment', error);
     throw error;
   }
@@ -1043,19 +1060,29 @@ export async function retryMessage(chatId: string, messageId: string): Promise<v
     return;
   }
 
+  if (isModerated(chatId)) {
+    // Retry-button presses require coaching; background retries are skipped.
+    // The original failed bubble remains visible as a failure until user action.
+    queueDraft(chatId, message.text, undefined, get(appState).messages[chatId] || []);
+    recordDiagnostic('info', 'moderator', 'failed_message_queued_for_review');
+    return;
+  }
   const retryKey = queueKey(chatId, messageId);
   if (queuedRetryKeys.has(retryKey)) {
     return;
   }
 
   queuedRetryKeys.add(retryKey);
+  recordDiagnostic('info', 'messaging', 'retry_started');
   markMessageStatus(chatId, messageId, 'queued');
 
   try {
     const sent = await sendTextMessage(chatId, message.text);
     markMessageStatus(chatId, messageId, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'retry_succeeded');
   } catch (error) {
     markMessageStatus(chatId, messageId, 'failed');
+    recordDiagnosticError('messaging', 'retry_failed', error);
     console.error('Failed to retry queued message', error);
   } finally {
     queuedRetryKeys.delete(retryKey);
@@ -1073,6 +1100,7 @@ export async function retryQueuedMessages(chatId?: string): Promise<void> {
     );
 
   for (const candidate of candidates) {
+    if (isModerated(candidate.chatId)) continue;
     await retryMessage(candidate.chatId, candidate.messageId);
   }
 }
@@ -1119,6 +1147,7 @@ function cacheDownloadedMedia(chatId: string, messageId: string, downloaded: Dow
 }
 
 export function ingestIncomingMessage(payload: IncomingMessagePayload): void {
+  if (!payload.fromMe && payload.eventKind === 'message' && payload.chatId !== 'status@broadcast') noteIncomingMessage(payload.chatId);
   if (payload.eventKind === 'edit') {
     applyMessageEdit(payload);
     return;
