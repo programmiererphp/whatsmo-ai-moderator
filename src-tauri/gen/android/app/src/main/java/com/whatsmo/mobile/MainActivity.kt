@@ -17,6 +17,15 @@ class MainActivity : TauriActivity() {
     // with Tauri's WebView lifecycle. See PR #2 regression.
     WindowCompat.setDecorFitsSystemWindows(window, true)
 
-    ContextCompat.startForegroundService(this, Intent(this, WhatsmoKeepAliveService::class.java))
+    // Recovery mode keeps the UI accessible while WhatsApp networking stays disabled.
+    // Skip the session service, which otherwise starts regardless of the JS UI state.
+    if (!java.io.File(filesDir, "whatsmo-safe-mode.flag").exists()) {
+      try {
+        ContextCompat.startForegroundService(this, Intent(this, WhatsmoKeepAliveService::class.java))
+      } catch (error: Exception) {
+        android.util.Log.e("Whatsmo", "Could not start keep-alive service", error)
+        // Failure to launch a non-essential background service must not close UI.
+      }
+    }
   }
 }
