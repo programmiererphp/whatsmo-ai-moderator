@@ -1057,9 +1057,10 @@ export async function retryMessage(chatId: string, messageId: string): Promise<v
   }
 
   if (isModerated(chatId)) {
-    // No silent retry can bypass the selected-chat AI gate.
-    // Old failed messages must be consciously reviewed in a new draft.
-    recordDiagnostic('warn', 'moderator', 'old_retry_blocked');
+    // Retry-button presses require coaching; background retries are skipped.
+    // The original failed bubble remains visible as a failure until user action.
+    queueDraft(chatId, message.text, undefined, get(appState).messages[chatId] || []);
+    recordDiagnostic('info', 'moderator', 'failed_message_queued_for_review');
     return;
   }
   const retryKey = queueKey(chatId, messageId);
@@ -1095,6 +1096,7 @@ export async function retryQueuedMessages(chatId?: string): Promise<void> {
     );
 
   for (const candidate of candidates) {
+    if (isModerated(candidate.chatId)) continue;
     await retryMessage(candidate.chatId, candidate.messageId);
   }
 }
