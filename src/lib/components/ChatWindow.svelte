@@ -22,6 +22,7 @@
   export let onDownloadMedia: (chatId: string, messageId: string) => void = () => undefined;
   export let onAttach: (chatId: string, file: File) => void;
   export let onDispatch: (draft: OutboxDraft) => Promise<boolean>;
+  export let blocked = false;
 
   const MESSAGE_PAGE_SIZE = 50;
 
@@ -362,6 +363,11 @@
     {/if}
   </div>
 
+  {#if blocked}
+    <div class="recovery-composer-blocked">
+      Messaging paused in Recovery safe mode. Existing messages remain visible.
+    </div>
+  {:else}
   <ChatComposer
     on:send={(event) => {
       if (editingMessage) {
@@ -379,6 +385,9 @@
     on:attach={(event) => onAttach(chat.id, event.detail)}
     on:typing={handleTyping}
   />
+
+  {/if}
+
 
   {#if timerOpen}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -569,6 +578,11 @@
 </section>
 
 <style>
+  .recovery-composer-blocked {
+    padding:12px 16px max(12px, var(--safe-bottom, 0px));
+    font-size:0.82rem; color:var(--muted); background:var(--paper);
+  }
+
   .chat-extras { min-width:0; width:100%; background:var(--paper); }
   .coach-bar { display:flex;gap:7px;padding:3px 9px;background:var(--paper);border-top:1px solid var(--border-color); }
   .coach-bar button { display:flex;align-items:center;gap:5px;border:0;border-radius:8px;background:var(--border-color);
