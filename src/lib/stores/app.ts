@@ -972,6 +972,7 @@ export async function sendMessage(chatId: string, text: string, options?: SendMe
 }
 
 export interface SendAttachmentOptions {
+  reviewed?: boolean;
   caption?: string;
   viewOnce?: boolean;
   ptt?: boolean;
@@ -981,6 +982,9 @@ export interface SendAttachmentOptions {
 
 export async function sendAttachment(chatId: string, file: File, options: SendAttachmentOptions | string = ''): Promise<void> {
   const attachmentOptions: SendAttachmentOptions = typeof options === 'string' ? { caption: options } : options;
+  if (isModerated(chatId) && !attachmentOptions.reviewed) {
+    throw new Error('Coached chats require attachment review before sending.');
+  }
   if (file.size === 0) {
     throw new Error('Attachment file is empty.');
   }
