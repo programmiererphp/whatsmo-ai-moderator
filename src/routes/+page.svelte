@@ -1,6 +1,8 @@
 <script lang="ts">
   import 'material-symbols/rounded.css';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { deliverDue, type OutboxDraft } from '$lib/moderator/outbox';
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import AuthPanel from '$lib/components/AuthPanel.svelte';
   import ChatList from '$lib/components/ChatList.svelte';
@@ -47,10 +49,19 @@
   let pendingAttachment: { chatId: string; file: File; kind: MediaKind; previewUrl?: string; caption: string; viewOnce: boolean } | null = null;
   let activeScreen: 'chats' | 'chat' | 'updates' | 'settings' | 'devices' = 'chats';
   let suppressHistoryPush = false;
+  let scheduledTimer: number | undefined;
+  async function sendApproved(draft: OutboxDraft): Promise<boolean> {
+    const state = get(appState);
+    const quote = draft.quote ? state.messages[draft.chatId]?.find(m => m.id === draft.quote?.id) : undefined;
+    return sendMessage(draft.chatId, draft.text, { reviewed: true, quotedMessage: quote });
+  }
+
 
 
 
   onMount(() => {
+    scheduledTimer = window.setInterval(() => { void deliverDue(sendApproved); }, 15000);
+    void deliverDue(sendApproved);
     recordDiagnostic('info', 'ui', 'page_mounted', { screen: activeScreen });
     window.history.replaceState({ screen: activeScreen }, '');
 
@@ -98,6 +109,7 @@
     }).catch((error) => recordDiagnosticError('notifications', 'actions_failed', error));
 
     return () => {
+      window.clearInterval(scheduledTimer);
       recordDiagnostic('info', 'ui', 'page_unmounted');
       window.removeEventListener('popstate', handlePopState);
       bridgeCleanup?.();
@@ -206,6 +218,7 @@
         onBack={() => setScreen('chats')}
         onSend={(chatId, text, quoted) => sendMessage(chatId, text, { quotedMessage: quoted })}
         onRetry={retryMessage}
+        onDispatch={sendApproved}
         onDownloadMedia={downloadAttachment}
         onAttach={handleAttachment}
       />
