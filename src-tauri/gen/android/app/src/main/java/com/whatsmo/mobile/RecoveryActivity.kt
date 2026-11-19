@@ -88,7 +88,9 @@ class RecoveryActivity : Activity() {
     }
     actionButton(container, "Refresh logs") { refresh() }
     actionButton(container, "Open Whatsmo") {
-      startActivity(Intent(this, MainActivity::class.java))
+      startActivity(Intent(this, MainActivity::class.java).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      })
       finish()
     }
     val warning = TextView(this)
@@ -123,7 +125,12 @@ class RecoveryActivity : Activity() {
   private fun setSafeMode(value: Boolean) {
     val flag = File(filesDir, SAFE_MODE_FILE)
     try {
-      if (value) flag.writeText("1") else flag.delete()
+      if (value) {
+        flag.writeText("1")
+        // No WhatsApp session service should stay running in recovery mode.
+        try { stopService(Intent(this, WhatsmoKeepAliveService::class.java)) }
+        catch (_: Exception) { /* no session service to stop */ }
+      } else flag.delete()
     } catch (error: Exception) {
       statusText.text = "Safe mode change failed: " + error.javaClass.simpleName
     }
