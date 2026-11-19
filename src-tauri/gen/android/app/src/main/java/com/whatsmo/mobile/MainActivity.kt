@@ -7,6 +7,7 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
+    CrashRecorder.install(this)
     super.onCreate(savedInstanceState)
 
     // Do not enable edge-to-edge without a tested WebView insets strategy.
