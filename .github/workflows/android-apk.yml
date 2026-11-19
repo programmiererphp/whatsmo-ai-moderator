@@ -14,6 +14,8 @@ jobs:
   check:
     name: Lint & typecheck
     runs-on: ubuntu-24.04
+    env:
+      VITE_BUILD_SHA: ${{ github.sha }}
     timeout-minutes: 30
 
     steps:
@@ -76,6 +78,8 @@ jobs:
   build-apk:
     name: Build release-test APK
     runs-on: ubuntu-24.04
+    env:
+      VITE_BUILD_SHA: ${{ github.sha }}
     timeout-minutes: 90
     needs: check
     environment: release
