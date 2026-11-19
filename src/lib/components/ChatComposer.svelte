@@ -119,7 +119,7 @@
     display: flex;
     align-items: flex-end;
     gap: 6px;
-    padding: 4px 8px 6px;
+    padding: 4px 8px 10px;
     background: transparent;
     position: relative;
   }
