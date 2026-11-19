@@ -8,6 +8,17 @@ import androidx.core.view.WindowCompat
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     CrashRecorder.install(this)
+    // One-time recovery boot for devices upgraded from a build that crashes
+    // seconds after launch. This never deletes accounts, chats or keys.
+    val recoveryPrefs = getSharedPreferences("whatsmo_diagnostics", MODE_PRIVATE)
+    if (!recoveryPrefs.getBoolean("recovery_v1_initialized", false)) {
+      try {
+        java.io.File(filesDir, "whatsmo-safe-mode.flag").writeText("1")
+        recoveryPrefs.edit().putBoolean("recovery_v1_initialized", true).apply()
+      } catch (error: Exception) {
+        android.util.Log.e("Whatsmo", "Could not initialize recovery safe mode", error)
+      }
+    }
     super.onCreate(savedInstanceState)
 
     // Do not enable edge-to-edge without a tested WebView insets strategy.
