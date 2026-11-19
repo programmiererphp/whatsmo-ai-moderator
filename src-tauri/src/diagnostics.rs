@@ -76,7 +76,9 @@ pub fn read_native_diagnostics(app: AppHandle) -> Result<String, String> {
         report.push_str(" ---\n");
         report.push_str(&tail);
         if report.len() > MAX_TOTAL_BYTES {
-            report = report[report.len() - MAX_TOTAL_BYTES..].to_string();
+            let mut start = report.len() - MAX_TOTAL_BYTES;
+            while !report.is_char_boundary(start) { start += 1; }
+            report = report[start..].to_string();
             break;
         }
     }
