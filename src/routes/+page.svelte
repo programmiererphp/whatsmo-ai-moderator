@@ -152,6 +152,7 @@
     pendingAttachment = null;
     try {
       await sendAttachment(attachment.chatId, attachment.file, {
+        reviewed: true, // user confirmed Whatsmo's attachment preview
         caption: attachment.caption,
         viewOnce: attachment.viewOnce,
         ptt: attachment.kind === 'audio',
