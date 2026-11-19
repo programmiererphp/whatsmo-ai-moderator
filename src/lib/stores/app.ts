@@ -39,6 +39,7 @@ import {
 } from '$lib/api/whatsmo';
 import { createMediaPreviewDataUrl, fileToBytes } from '$lib/utils/media';
 import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
+import { isModerated, queueDraft, noteIncomingMessage } from '$lib/moderator/outbox';
 
 const now = Date.now();
 const STORAGE_KEY = 'whatsmo.chat-state.v1';
@@ -917,14 +918,17 @@ export function handleContactNumberChanged(payload: ContactNumberChangedPayload)
 }
 
 export interface SendMessageOptions {
+  reviewed?: boolean;
   ephemeralOverride?: number;
   quotedMessage?: ChatMessage;
 }
 
-export async function sendMessage(chatId: string, text: string, options?: SendMessageOptions): Promise<void> {
+export async function sendMessage(chatId: string, text: string, options?: SendMessageOptions): Promise<boolean> {
   const trimmed = text.trim();
-  if (!trimmed) {
-    return;
+  if (!trimmed) return false;
+  if (isModerated(chatId) && !options?.reviewed) {
+    queueDraft(chatId, trimmed, options?.quotedMessage, get(appState).messages[chatId] || []);
+    return false;
   }
 
   const duration = options?.ephemeralOverride ?? get(appState).chatEphemeralDefaults[chatId] ?? undefined;
@@ -958,10 +962,12 @@ export async function sendMessage(chatId: string, text: string, options?: SendMe
     );
     markMessageStatus(chatId, optimistic.id, 'sent', sent.id);
     recordDiagnostic('info', 'messaging', 'text_send_succeeded');
+    return true;
   } catch (error) {
     markMessageStatus(chatId, optimistic.id, 'failed');
     recordDiagnosticError('messaging', 'text_send_failed', error);
     console.error('Failed to send message', error);
+    return false;
   }
 }
 
@@ -1050,6 +1056,12 @@ export async function retryMessage(chatId: string, messageId: string): Promise<v
     return;
   }
 
+  if (isModerated(chatId)) {
+    // No silent retry can bypass the selected-chat AI gate.
+    // Old failed messages must be consciously reviewed in a new draft.
+    recordDiagnostic('warn', 'moderator', 'old_retry_blocked');
+    return;
+  }
   const retryKey = queueKey(chatId, messageId);
   if (queuedRetryKeys.has(retryKey)) {
     return;
@@ -1129,6 +1141,7 @@ function cacheDownloadedMedia(chatId: string, messageId: string, downloaded: Dow
 }
 
 export function ingestIncomingMessage(payload: IncomingMessagePayload): void {
+  if (!payload.fromMe && payload.eventKind === 'message' && payload.chatId !== 'status@broadcast') noteIncomingMessage(payload.chatId);
   if (payload.eventKind === 'edit') {
     applyMessageEdit(payload);
     return;
