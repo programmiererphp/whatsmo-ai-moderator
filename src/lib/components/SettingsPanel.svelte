@@ -3,6 +3,7 @@
   import type { ThemeMode } from '$lib/api/types';
   import Icon from './Icon.svelte';
   import DiagnosticsPanel from './DiagnosticsPanel.svelte';
+  import AiSettingsPanel from '$lib/ai/AiSettingsPanel.svelte';
   let showDiagnostics = false;
 
   const modes: { value: ThemeMode; label: string; icon: string }[] = [
@@ -160,6 +161,8 @@
       <Icon name="terminal" size="20px" /> Open diagnostics
     </button>
   </section>
+
+  <AiSettingsPanel />
 
   <section class="setting-group about-section">
     <h3>About</h3>
