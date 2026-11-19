@@ -532,6 +532,13 @@ pub async fn send_text_message(
     quoted_text: Option<String>,
 ) -> CommandResult<OutgoingMessagePayload> {
     let trimmed = text.trim().to_string();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "command_entered",
+        bytes = trimmed.len(),
+        quoted = quoted_message_id.is_some(),
+        "Whatsmo text send invoked (no message content)"
+    );
     if trimmed.is_empty() {
         return Err("Message cannot be empty.".to_string());
     }
@@ -571,9 +578,21 @@ pub async fn send_text_message(
 
     let message = wrap_ephemeral(inner_message, ephemeral_duration);
 
-    let message_id = client
-        .send_message(jid, message)
-        .await
+    let began = std::time::Instant::now();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_started",
+        "Entering WhatsApp Rust client send"
+    );
+    let send_result = client.send_message(jid, message).await;
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_completed",
+        elapsed_ms = began.elapsed().as_millis() as u64,
+        success = send_result.is_ok(),
+        "WhatsApp Rust client send returned"
+    );
+    let message_id = send_result
         .map_err(|error| format!("Failed to send message: {error}"))?;
 
     Ok(OutgoingMessagePayload {
