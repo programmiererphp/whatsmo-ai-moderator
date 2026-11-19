@@ -11,6 +11,7 @@ Open **Settings → Diagnostics & crash reports → Open diagnostics**.
 - Text/media send attempts, outcomes and retries; lengths and types only.
 - Rust's existing rotating structured log files and panic log, accessed on-demand by an app-private Tauri command.
 - Uncaught Android Java/Kotlin exception stacks via CrashRecorder in app-private storage.
+- Android 11+ ActivityManager process-exit reasons/status on next launch (e.g. crash, ANR, low-memory process termination).
 
 ## Storage and export
 - Last 500 frontend events persist in localStorage, written synchronously on each event.
@@ -22,7 +23,7 @@ Open **Settings → Diagnostics & crash reports → Open diagnostics**.
 - **Clear events** clears frontend logs only; does not delete chat sessions or native logs.
 
 ## Limits
-- Native SIGSEGV/SIGABRT, Android OS process kills, ANRs and crashes before handler initialization are not reliably captured by the app.
+- Native SIGSEGV/SIGABRT, Android OS process kills and ANRs may be identified by the next-launch OS exit reason on Android 11+, but full trace details or stack traces are not guaranteed. Crashes before handler initialization might not have an app-written stack.
 - An unclosed session can also result from ordinary Android background termination.
 - Kotlin crash-file lookup from Rust depends on the Android data directory mapping; some devices may require external adb logcat.
 - Complete OS/kernel diagnostics require an authorized Android bug report or adb; apps cannot access arbitrary other-process logs.
