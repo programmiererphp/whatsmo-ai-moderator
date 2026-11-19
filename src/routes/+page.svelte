@@ -12,7 +12,7 @@
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import DevicesPanel from '$lib/components/DevicesPanel.svelte';
   import type { MediaKind } from '$lib/api/types';
-  import { connectBridge, connectNotificationActions } from '$lib/api/whatsmo';
+  import { connectBridge, connectNotificationActions, editMessage } from '$lib/api/whatsmo';
   import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
   import {
     appState,
@@ -51,6 +51,10 @@
   let suppressHistoryPush = false;
   let scheduledTimer: number | undefined;
   async function sendApproved(draft: OutboxDraft): Promise<boolean> {
+    if (draft.editMessageId) {
+      await editMessage(draft.chatId, draft.editMessageId, draft.text);
+      return true;
+    }
     const state = get(appState);
     const quote = draft.quote ? state.messages[draft.chatId]?.find(m => m.id === draft.quote?.id) : undefined;
     return sendMessage(draft.chatId, draft.text, { reviewed: true, quotedMessage: quote });
