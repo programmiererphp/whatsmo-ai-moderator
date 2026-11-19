@@ -1,5 +1,10 @@
 name: Build Android APK
 
+# Cancel superseded builds on the same branch to avoid costly duplicate APK builds.
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
