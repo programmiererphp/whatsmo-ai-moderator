@@ -9,7 +9,7 @@ export type DraftStatus='analyzing'|'review'|'scheduled'|'sending';
 export interface OutboxDraft {
   id:string; chatId:string; text:string; createdAt:number; status:DraftStatus;
   hint:string; suggestion:string; recommendation:'send'|'rewrite'|'hold';
-  delayMinutes:number; dueAt?:number; warning?:string;
+  delayMinutes:number; dueAt?:number; warning?:string; editMessageId?:string;
   quote?: {id:string; senderId:string; senderName?:string; text?:string};
 }
 function read<T>(key:string, fallback:T):T {
@@ -38,10 +38,11 @@ function change(fn:(items:OutboxDraft[])=>OutboxDraft[]):void {
     return next;
   });
 }
-export function queueDraft(chatId:string,text:string,quote?:ChatMessage,history:ChatMessage[]=[]):void{
+export function queueDraft(chatId:string,text:string,quote?:ChatMessage,history:ChatMessage[]=[],editMessageId?:string):void{
   const item:OutboxDraft={
     id:crypto.randomUUID(),chatId,text:text.trim(),createdAt:Date.now(),status:'analyzing',
     hint:'',suggestion:text.trim(),recommendation:'send',delayMinutes:0,
+    ...(editMessageId?{editMessageId}:{}),
     ...(quote?{quote:{id:quote.id,senderId:quote.senderId,senderName:quote.senderName,text:quote.text?.slice(0,300)}}:{})
   };
   change(x=>[...x,item]);
