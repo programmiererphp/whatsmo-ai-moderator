@@ -3,6 +3,9 @@
   import { appState, setChatEphemeralDefault } from '$lib/stores/app';
   import { revokeMessage, editMessage, sendReaction, sendChatPresence, markChatRead } from '$lib/api/whatsmo';
   import ChatComposer from './ChatComposer.svelte';
+  import ModerationPanel from '$lib/moderator/ModerationPanel.svelte';
+  import GameHub from '$lib/games/GameHub.svelte';
+  import { moderatedChats, setModerated, type OutboxDraft } from '$lib/moderator/outbox';
   import Icon from './Icon.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import MessageContextMenu from './MessageContextMenu.svelte';
@@ -18,6 +21,7 @@
   export let onRetry: (chatId: string, messageId: string) => void = () => undefined;
   export let onDownloadMedia: (chatId: string, messageId: string) => void = () => undefined;
   export let onAttach: (chatId: string, file: File) => void;
+  export let onDispatch: (draft: OutboxDraft) => Promise<boolean>;
 
   const MESSAGE_PAGE_SIZE = 50;
 
@@ -39,6 +43,8 @@
   let showReactionPicker = false;
   let reactionTarget: ChatMessage | null = null;
   let typingTimeout: number | undefined;
+  let gamesOpen = false;
+  $: coached = $moderatedChats.includes(chat.id);
 
   const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -80,6 +86,7 @@
     currentChatId = chat.id;
     visibleMessageCount = MESSAGE_PAGE_SIZE;
     infoOpen = false;
+    gamesOpen = false;
     setTimeout(scrollToBottom, 50);
   }
 
@@ -336,6 +343,25 @@
     </div>
   {/if}
 
+  <div class="chat-extras">
+    <div class="coach-bar">
+      <button type="button" class:coached on:click={() => setModerated(chat.id, !coached)}
+        aria-label="Toggle AI Coach for this chat">
+        <Icon name="psychology" size="16px" /> Coach {coached ? 'ON' : 'OFF'}
+      </button>
+      <button type="button" class:coached={gamesOpen} on:click={() => (gamesOpen = !gamesOpen)}
+        aria-label="Open social games">
+        <Icon name="palette" size="16px" /> Games {gamesOpen ? '▲' : '▼'}
+      </button>
+    </div>
+    {#if coached}
+      <ModerationPanel chatId={chat.id} onDispatch={onDispatch} />
+    {/if}
+    {#if gamesOpen}
+      <GameHub chatId={chat.id} {messages} onShare={(file) => onAttach(chat.id,file)} />
+    {/if}
+  </div>
+
   <ChatComposer
     on:send={(event) => {
       if (editingMessage) {
@@ -539,6 +565,11 @@
 </section>
 
 <style>
+  .chat-extras { min-width:0; width:100%; background:var(--paper); }
+  .coach-bar { display:flex;gap:7px;padding:3px 9px;background:var(--paper);border-top:1px solid var(--border-color); }
+  .coach-bar button { display:flex;align-items:center;gap:5px;border:0;border-radius:8px;background:var(--border-color);
+    padding:6px 10px;color:var(--muted);font-size:.74rem; }
+  .coach-bar button.coached { background:var(--wa-green-dark);color:white; }
   .chat-window {
     position: relative;
     display: grid;
