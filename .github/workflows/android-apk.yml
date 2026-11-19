@@ -79,7 +79,8 @@ jobs:
     timeout-minutes: 90
     needs: check
     environment: release
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    # Build APKs on PRs too, so Android/Kotlin regressions are caught before merge.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'pull_request'
 
     steps:
       - name: Checkout
