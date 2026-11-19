@@ -11,6 +11,7 @@
   import DevicesPanel from '$lib/components/DevicesPanel.svelte';
   import type { MediaKind } from '$lib/api/types';
   import { connectBridge, connectNotificationActions } from '$lib/api/whatsmo';
+  import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
   import {
     appState,
     downloadAttachment,
@@ -50,12 +51,14 @@
 
 
   onMount(() => {
+    recordDiagnostic('info', 'ui', 'page_mounted', { screen: activeScreen });
     window.history.replaceState({ screen: activeScreen }, '');
 
     const handlePopState = (event: PopStateEvent) => {
       const state = event.state as { screen?: typeof activeScreen } | null;
       suppressHistoryPush = true;
       activeScreen = state?.screen ?? 'chats';
+      recordDiagnostic('info', 'navigation', 'pop_state', { screen: activeScreen });
       suppressHistoryPush = false;
     };
 
@@ -63,10 +66,12 @@
     void requestNotifications();
     void connectBridge({
       onAuth: (payload) => {
+        recordDiagnostic('info', 'account', 'auth_status', { mode: payload.mode });
         setAuth(payload);
         if (payload.mode === 'connected') void refreshAccountDevice();
       },
       onConnection: (payload) => {
+        recordDiagnostic('info', 'account', 'connection_status', { connected: payload.connected });
         setConnection(payload);
         if (payload.connected) void refreshAccountDevice();
       },
@@ -81,17 +86,19 @@
       onReceipt: setReceipt
     }).then((cleanup) => {
       bridgeCleanup = cleanup;
+      recordDiagnostic('info', 'bridge', 'listeners_attached');
       void resumeSession();
-    });
+    }).catch((error) => recordDiagnosticError('bridge', 'listeners_failed', error));
     void connectNotificationActions((chatId) => {
       selectChat(chatId);
       activeScreen = 'chat';
       pushNavigationState();
     }).then((cleanup) => {
       notificationActionCleanup = cleanup;
-    });
+    }).catch((error) => recordDiagnosticError('notifications', 'actions_failed', error));
 
     return () => {
+      recordDiagnostic('info', 'ui', 'page_unmounted');
       window.removeEventListener('popstate', handlePopState);
       bridgeCleanup?.();
       notificationActionCleanup?.();
@@ -114,6 +121,7 @@
         viewOnce: false
       };
     } catch (error) {
+      recordDiagnosticError('media', 'attachment_flow_failed', error);
       attachNotice = true;
       window.setTimeout(() => {
         attachNotice = false;
@@ -158,12 +166,14 @@
   }
 
   function openChat(chatId: string): void {
+    recordDiagnostic('info', 'navigation', 'chat_opened');
     selectChat(chatId);
     activeScreen = 'chat';
     pushNavigationState();
   }
 
   function setScreen(screen: 'chats' | 'updates' | 'settings' | 'devices'): void {
+    recordDiagnostic('info', 'navigation', 'screen_changed', { screen });
     activeScreen = screen;
     pushNavigationState();
   }
