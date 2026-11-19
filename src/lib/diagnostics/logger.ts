@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { invoke } from '@tauri-apps/api/core';
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface DiagnosticEntry {
@@ -14,6 +15,24 @@ const LOG_KEY = 'whatsmo.diagnostics.entries.v1';
 const SESSION_KEY = 'whatsmo.diagnostics.active-session.v1';
 const VERBOSE_KEY = 'whatsmo.diagnostics.verbose.v1';
 const MAX_ENTRIES = 500;
+let nativeFlushScheduled = false;
+function snapshotToNative(): void {
+  if (typeof window === 'undefined' || nativeFlushScheduled || !('__TAURI_INTERNALS__' in window)) return;
+  nativeFlushScheduled = true;
+  window.setTimeout(() => {
+    nativeFlushScheduled = false;
+    try {
+      // Bounded, already-redacted structured events only; never send message
+      // bodies or credentials into the native diagnostic snapshot.
+      const recent = entries.slice(-90);
+      let serialized = recent.map(entry => JSON.stringify(entry)).join('\n');
+      if (serialized.length > 44_000) serialized = serialized.slice(-44_000);
+      void invoke('write_js_diagnostics_snapshot', { content: serialized })
+        .catch(() => { /* diagnostics must never interrupt messaging */ });
+    } catch { /* non-critical */ }
+  }, 1200);
+}
+
 const BUILD_ID = import.meta.env.VITE_BUILD_SHA || 'development';
 const MAX_DETAIL_LENGTH = 280;
 const REDACTED = '[redacted]';
@@ -120,6 +139,7 @@ export function recordDiagnostic(
     }
     diagnosticEntries.set(entries);
     persist();
+    snapshotToNative();
   } catch {
     // All diagnostics are non-critical.
   }
