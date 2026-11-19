@@ -5,7 +5,7 @@
   import ChatComposer from './ChatComposer.svelte';
   import ModerationPanel from '$lib/moderator/ModerationPanel.svelte';
   import GameHub from '$lib/games/GameHub.svelte';
-  import { moderatedChats, setModerated, type OutboxDraft } from '$lib/moderator/outbox';
+  import { moderatedChats, setModerated, queueDraft, type OutboxDraft } from '$lib/moderator/outbox';
   import Icon from './Icon.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import MessageContextMenu from './MessageContextMenu.svelte';
@@ -365,7 +365,11 @@
   <ChatComposer
     on:send={(event) => {
       if (editingMessage) {
-        void editMessage(chat.id, editingMessage.id, event.detail);
+        if (coached) {
+          queueDraft(chat.id, event.detail, undefined, messages, editingMessage.id);
+        } else {
+          void editMessage(chat.id, editingMessage.id, event.detail);
+        }
         editingMessage = null;
       } else {
         onSend(chat.id, event.detail, replyingTo ?? undefined);
