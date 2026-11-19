@@ -301,7 +301,12 @@
           isGroupContinuation={isGroupOther && !isNewSender && showGroupAvatars}
           senderAvatarUrl={showGroupAvatars ? senderContact?.avatarUrl : undefined}
           senderAvatarGradient={showGroupAvatars ? senderContact?.avatarGradient : undefined}
-          onRetry={() => onRetry(chat.id, message.id)}
+          onRetry={() => {
+             if (blocked) return;
+             if (window.confirm('This message may already have reached WhatsApp before the app stopped. Check the other account first. Retry sending it?')) {
+               onRetry(chat.id, message.id);
+             }
+           }}
           onDownloadMedia={() => onDownloadMedia(chat.id, message.id)}
           onOpenMedia={openMedia}
           onLongPress={openContextMenu}
