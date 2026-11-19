@@ -38,6 +38,7 @@ import {
   syncGroupMetadata as syncGroupMetadataApi
 } from '$lib/api/whatsmo';
 import { createMediaPreviewDataUrl, fileToBytes } from '$lib/utils/media';
+import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
 
 const now = Date.now();
 const STORAGE_KEY = 'whatsmo.chat-state.v1';
@@ -928,6 +929,7 @@ export async function sendMessage(chatId: string, text: string, options?: SendMe
 
   const duration = options?.ephemeralOverride ?? get(appState).chatEphemeralDefaults[chatId] ?? undefined;
   const quoted = options?.quotedMessage;
+  recordDiagnostic('info', 'messaging', 'text_send_requested', { characters: trimmed.length, reply: Boolean(quoted) });
 
   const optimistic: ChatMessage = {
     id: crypto.randomUUID(),
@@ -955,8 +957,10 @@ export async function sendMessage(chatId: string, text: string, options?: SendMe
       quoted?.text
     );
     markMessageStatus(chatId, optimistic.id, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'text_send_succeeded');
   } catch (error) {
     markMessageStatus(chatId, optimistic.id, 'failed');
+    recordDiagnosticError('messaging', 'text_send_failed', error);
     console.error('Failed to send message', error);
   }
 }
@@ -984,6 +988,7 @@ export async function sendAttachment(chatId: string, file: File, options: SendAt
   }
 
   const trimmedCaption = (attachmentOptions.caption ?? '').trim();
+  recordDiagnostic('info', 'messaging', 'media_send_requested', { kind, bytes: file.size });
   const name = file.name || `${kind}-attachment`;
   const bytes = await fileToBytes(file);
   const mimeType = file.type || fallbackMimeType(kind);
@@ -1030,8 +1035,10 @@ export async function sendAttachment(chatId: string, file: File, options: SendAt
       duration
     );
     markMessageStatus(chatId, optimistic.id, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'media_send_succeeded');
   } catch (error) {
     markMessageStatus(chatId, optimistic.id, 'failed');
+    recordDiagnosticError('messaging', 'media_send_failed', error);
     console.error('Failed to send attachment', error);
     throw error;
   }
@@ -1049,13 +1056,16 @@ export async function retryMessage(chatId: string, messageId: string): Promise<v
   }
 
   queuedRetryKeys.add(retryKey);
+  recordDiagnostic('info', 'messaging', 'retry_started');
   markMessageStatus(chatId, messageId, 'queued');
 
   try {
     const sent = await sendTextMessage(chatId, message.text);
     markMessageStatus(chatId, messageId, 'sent', sent.id);
+    recordDiagnostic('info', 'messaging', 'retry_succeeded');
   } catch (error) {
     markMessageStatus(chatId, messageId, 'failed');
+    recordDiagnosticError('messaging', 'retry_failed', error);
     console.error('Failed to retry queued message', error);
   } finally {
     queuedRetryKeys.delete(retryKey);
