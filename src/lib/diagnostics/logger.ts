@@ -14,6 +14,7 @@ const LOG_KEY = 'whatsmo.diagnostics.entries.v1';
 const SESSION_KEY = 'whatsmo.diagnostics.active-session.v1';
 const VERBOSE_KEY = 'whatsmo.diagnostics.verbose.v1';
 const MAX_ENTRIES = 500;
+const BUILD_ID = import.meta.env.VITE_BUILD_SHA || 'development';
 const MAX_DETAIL_LENGTH = 280;
 const REDACTED = '[redacted]';
 
@@ -111,7 +112,12 @@ export function recordDiagnostic(
       event: cleanName(event),
       ...(details ? { details: cleanDetails(details) } : {})
     };
-    entries = [...entries, entry].slice(-MAX_ENTRIES);
+    entries = [...entries, entry];
+    // Preserve older errors/warnings when high-volume routine events arrive.
+    if (entries.length > MAX_ENTRIES) {
+      const routineIndex = entries.findIndex(item => item.level === 'debug' || item.level === 'info');
+      entries.splice(routineIndex >= 0 ? routineIndex : 0, 1);
+    }
     diagnosticEntries.set(entries);
     persist();
   } catch {
@@ -188,7 +194,9 @@ export function initDiagnostics(): void {
     platform: navigator.platform ?? 'unknown',
     language: navigator.language ?? 'unknown',
     viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight
+    viewportHeight: window.innerHeight,
+    online: navigator.onLine,
+    build: BUILD_ID
   });
   window.setInterval(heartbeat, 15000);
 
@@ -205,6 +213,8 @@ export function initDiagnostics(): void {
       active: false, session: sessionId, lastSeen: new Date().toISOString()
     })); } catch { /* ignore */ }
   });
+  window.addEventListener('online', () => recordDiagnostic('info', 'network', 'online'));
+  window.addEventListener('offline', () => recordDiagnostic('warn', 'network', 'offline'));
   document.addEventListener('visibilitychange', () => {
     recordDiagnostic('info', 'lifecycle', document.hidden ? 'background' : 'foreground');
     if (!document.hidden) heartbeat();
@@ -229,6 +239,7 @@ export function formatDiagnosticReport(nativeLogs = ''): string {
     name: 'Whatsmo diagnostic report',
     exportTime: new Date().toISOString(),
     version: '0.1.0',
+    build: BUILD_ID,
     session: sessionId,
     entries: entries.length,
     environment
