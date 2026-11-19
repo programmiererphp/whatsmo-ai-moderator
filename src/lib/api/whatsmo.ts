@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   isPermissionGranted,
@@ -33,6 +34,39 @@ import type {
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };
 
+/** Never log command arguments or response bodies: they include message content,
+ * phone identifiers, pairing codes, media keys and session information.
+ */
+async function loggedInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'native', command + '.start');
+  try {
+    const result = await invoke<T>(command, args);
+    recordDiagnostic('info', 'native', command + '.success', { durationMs: Date.now() - startedAt });
+    return result;
+  } catch (error) {
+    recordDiagnosticError('native', command + '.failure', error);
+    throw error;
+  }
+}
+
+function observedEvent<T>(name: string, handler: (payload: T) => void): (event: { payload: T }) => void {
+  return (event) => {
+    recordDiagnostic(name === 'connection' || name === 'auth' ? 'info' : 'debug', 'bridge', name + '.received');
+    try { handler(event.payload); }
+    catch (error) {
+      recordDiagnosticError('bridge', name + '.handler_failed', error);
+      throw error;
+    }
+  };
+}
+
+export async function readNativeDiagnostics(): Promise<string> {
+  if (!isTauriRuntime()) return 'Browser preview; native logs are only available in installed Android app.';
+  return loggedInvoke<string>('read_native_diagnostics');
+}
+
+
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in (window as TauriWindow);
 }
@@ -46,7 +80,7 @@ export async function startQrAuth(): Promise<AuthPayload> {
     };
   }
 
-  return invoke<AuthPayload>('start_qr_auth');
+  return loggedInvoke<AuthPayload>('start_qr_auth');
 }
 
 export async function requestPairCode(phoneNumber: string): Promise<AuthPayload> {
@@ -59,7 +93,7 @@ export async function requestPairCode(phoneNumber: string): Promise<AuthPayload>
     };
   }
 
-  return invoke<AuthPayload>('request_pair_code', { phoneNumber });
+  return loggedInvoke<AuthPayload>('request_pair_code', { phoneNumber });
 }
 
 export async function disconnectSession(): Promise<ConnectionPayload> {
@@ -67,7 +101,7 @@ export async function disconnectSession(): Promise<ConnectionPayload> {
     return { connected: false, message: 'Preview session cleared.' };
   }
 
-  return invoke<ConnectionPayload>('disconnect_session');
+  return loggedInvoke<ConnectionPayload>('disconnect_session');
 }
 
 export async function logoutSession(): Promise<ConnectionPayload> {
@@ -75,7 +109,7 @@ export async function logoutSession(): Promise<ConnectionPayload> {
     return { connected: false, message: 'Preview session unlinked.' };
   }
 
-  return invoke<ConnectionPayload>('logout_session');
+  return loggedInvoke<ConnectionPayload>('logout_session');
 }
 
 export async function getSessionStatus(): Promise<SessionStatusPayload> {
@@ -87,7 +121,7 @@ export async function getSessionStatus(): Promise<SessionStatusPayload> {
     };
   }
 
-  return invoke<SessionStatusPayload>('get_session_status');
+  return loggedInvoke<SessionStatusPayload>('get_session_status');
 }
 
 export async function getAccountDevice(): Promise<AccountDevicePayload> {
@@ -104,7 +138,7 @@ export async function getAccountDevice(): Promise<AccountDevicePayload> {
     };
   }
 
-  return invoke<AccountDevicePayload>('get_account_device');
+  return loggedInvoke<AccountDevicePayload>('get_account_device');
 }
 
 export async function resumeSavedSession(): Promise<SessionStatusPayload> {
@@ -116,7 +150,7 @@ export async function resumeSavedSession(): Promise<SessionStatusPayload> {
     };
   }
 
-  return invoke<SessionStatusPayload>('resume_saved_session');
+  return loggedInvoke<SessionStatusPayload>('resume_saved_session');
 }
 
 export async function sendTextMessage(
@@ -136,32 +170,32 @@ export async function sendTextMessage(
     };
   }
 
-  return invoke<OutgoingMessagePayload>('send_text_message', { chatId, text, ephemeralDuration, quotedMessageId, quotedSender, quotedText });
+  return loggedInvoke<OutgoingMessagePayload>('send_text_message', { chatId, text, ephemeralDuration, quotedMessageId, quotedSender, quotedText });
 }
 
 export async function revokeMessage(chatId: string, messageId: string): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>('revoke_message', { chatId, messageId });
+  return loggedInvoke<void>('revoke_message', { chatId, messageId });
 }
 
 export async function editMessage(chatId: string, messageId: string, newText: string): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>('edit_message', { chatId, messageId, newText });
+  return loggedInvoke<void>('edit_message', { chatId, messageId, newText });
 }
 
 export async function sendReaction(chatId: string, messageId: string, senderId: string, emoji: string): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>('send_reaction', { chatId, messageId, senderId, emoji });
+  return loggedInvoke<void>('send_reaction', { chatId, messageId, senderId, emoji });
 }
 
 export async function sendChatPresence(chatId: string, composing: boolean): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>('send_chat_presence', { chatId, composing });
+  return loggedInvoke<void>('send_chat_presence', { chatId, composing });
 }
 
 export async function markChatRead(chatId: string): Promise<void> {
   if (!isTauriRuntime()) return;
-  return invoke<void>('mark_chat_read', { chatId });
+  return loggedInvoke<void>('mark_chat_read', { chatId });
 }
 
 export async function sendMediaMessage(
@@ -187,7 +221,7 @@ export async function sendMediaMessage(
     };
   }
 
-  return invoke<OutgoingMediaPayload>('send_media_message', {
+  return loggedInvoke<OutgoingMediaPayload>('send_media_message', {
     chatId,
     kind,
     data,
@@ -225,7 +259,7 @@ export async function downloadMediaAttachment(media: {
     };
   }
 
-  return invoke<DownloadedMediaPayload>('download_media_attachment', {
+  return loggedInvoke<DownloadedMediaPayload>('download_media_attachment', {
     kind: media.kind,
     name: media.name,
     mimeType: media.mimeType ?? 'application/octet-stream',
@@ -252,7 +286,7 @@ export async function sendTextStatus(
     };
   }
 
-  return invoke<StatusPostPayload>('send_text_status', {
+  return loggedInvoke<StatusPostPayload>('send_text_status', {
     text,
     backgroundArgb,
     font,
@@ -270,7 +304,7 @@ export async function sendRawStatus(
     return { id: crypto.randomUUID(), text, timestampMs: Date.now() };
   }
 
-  return invoke<StatusPostPayload>('send_raw_status', { text, recipients, privacy });
+  return loggedInvoke<StatusPostPayload>('send_raw_status', { text, recipients, privacy });
 }
 
 export async function sendImageStatus(
@@ -284,7 +318,7 @@ export async function sendImageStatus(
     return { id: crypto.randomUUID(), text: caption || 'Image status', timestampMs: Date.now() };
   }
 
-  return invoke<StatusPostPayload>('send_image_status', {
+  return loggedInvoke<StatusPostPayload>('send_image_status', {
     data,
     thumbnail,
     caption,
@@ -305,7 +339,7 @@ export async function sendVideoStatus(
     return { id: crypto.randomUUID(), text: caption || 'Video status', timestampMs: Date.now() };
   }
 
-  return invoke<StatusPostPayload>('send_video_status', {
+  return loggedInvoke<StatusPostPayload>('send_video_status', {
     data,
     thumbnail,
     durationSeconds,
@@ -324,7 +358,7 @@ export async function revokeStatus(
     return { id: crypto.randomUUID(), text: `Revoked ${messageId}`, timestampMs: Date.now() };
   }
 
-  return invoke<StatusPostPayload>('revoke_status', { messageId, recipients, privacy });
+  return loggedInvoke<StatusPostPayload>('revoke_status', { messageId, recipients, privacy });
 }
 
 export async function sendStatusReaction(
@@ -336,7 +370,7 @@ export async function sendStatusReaction(
     return { id: String(serverId), text: reaction ? `Reacted with ${reaction}` : 'Reaction removed', timestampMs: Date.now() };
   }
 
-  return invoke<StatusPostPayload>('send_status_reaction', { statusOwner, serverId, reaction });
+  return loggedInvoke<StatusPostPayload>('send_status_reaction', { statusOwner, serverId, reaction });
 }
 
 export async function syncContacts(phones: string[]): Promise<ContactLookupPayload[]> {
@@ -350,7 +384,7 @@ export async function syncContacts(phones: string[]): Promise<ContactLookupPaylo
     }));
   }
 
-  return invoke<ContactLookupPayload[]>('sync_contacts', { phones });
+  return loggedInvoke<ContactLookupPayload[]>('sync_contacts', { phones });
 }
 
 export async function syncContactProfiles(jids: string[]): Promise<ContactProfilePayload[]> {
@@ -364,7 +398,7 @@ export async function syncContactProfiles(jids: string[]): Promise<ContactProfil
     }));
   }
 
-  return invoke<ContactProfilePayload[]>('sync_contact_profiles', { jids });
+  return loggedInvoke<ContactProfilePayload[]>('sync_contact_profiles', { jids });
 }
 
 export async function syncGroupMetadata(groupIds: string[]): Promise<GroupMetadataPayload[]> {
@@ -381,7 +415,7 @@ export async function syncGroupMetadata(groupIds: string[]): Promise<GroupMetada
     }));
   }
 
-  return invoke<GroupMetadataPayload[]>('sync_group_metadata', { groupIds });
+  return loggedInvoke<GroupMetadataPayload[]>('sync_group_metadata', { groupIds });
 }
 
 export async function enableNotifications(): Promise<boolean> {
@@ -448,17 +482,17 @@ export async function connectBridge(handlers: BridgeHandlers): Promise<UnlistenF
   }
 
   const unlisteners = await Promise.all([
-    listen<AuthPayload>('whatsmo://auth', (event) => handlers.onAuth(event.payload)),
-    listen<ConnectionPayload>('whatsmo://connection', (event) => handlers.onConnection(event.payload)),
-    listen<IncomingMessagePayload>('whatsmo://message', (event) => handlers.onMessage(event.payload)),
-    listen<IncomingReactionPayload>('whatsmo://reaction', (event) => handlers.onReaction(event.payload)),
-    listen<HistorySyncPayload>('whatsmo://history-sync', (event) => handlers.onHistorySync(event.payload)),
-    listen<HistorySyncProgressPayload>('whatsmo://history-progress', (event) => handlers.onHistoryProgress(event.payload)),
-    listen<ContactUpdatedPayload>('whatsmo://contact-updated', (event) => handlers.onContactUpdated(event.payload)),
-    listen<ContactNumberChangedPayload>('whatsmo://contact-number-changed', (event) => handlers.onContactNumberChanged(event.payload)),
-    listen<ContactSyncRequestedPayload>('whatsmo://contact-sync-requested', (event) => handlers.onContactSyncRequested(event.payload)),
-    listen<TypingPayload>('whatsmo://typing', (event) => handlers.onTyping(event.payload)),
-    listen<ReceiptPayload>('whatsmo://receipt', (event) => handlers.onReceipt(event.payload))
+    listen<AuthPayload>('whatsmo://auth', observedEvent('auth', handlers.onAuth)),
+    listen<ConnectionPayload>('whatsmo://connection', observedEvent('connection', handlers.onConnection)),
+    listen<IncomingMessagePayload>('whatsmo://message', observedEvent('message', handlers.onMessage)),
+    listen<IncomingReactionPayload>('whatsmo://reaction', observedEvent('reaction', handlers.onReaction)),
+    listen<HistorySyncPayload>('whatsmo://history-sync', observedEvent('history-sync', handlers.onHistorySync)),
+    listen<HistorySyncProgressPayload>('whatsmo://history-progress', observedEvent('history-progress', handlers.onHistoryProgress)),
+    listen<ContactUpdatedPayload>('whatsmo://contact-updated', observedEvent('contact-updated', handlers.onContactUpdated)),
+    listen<ContactNumberChangedPayload>('whatsmo://contact-number-changed', observedEvent('contact-number-changed', handlers.onContactNumberChanged)),
+    listen<ContactSyncRequestedPayload>('whatsmo://contact-sync-requested', observedEvent('contact-sync-requested', handlers.onContactSyncRequested)),
+    listen<TypingPayload>('whatsmo://typing', observedEvent('typing', handlers.onTyping)),
+    listen<ReceiptPayload>('whatsmo://receipt', observedEvent('receipt', handlers.onReceipt))
   ]);
 
   return () => {
@@ -479,7 +513,7 @@ export async function getDeviceContacts(): Promise<DeviceContact[]> {
   }
 
   try {
-    const result = await invoke<{ contacts: string }>('plugin:contacts|get_contacts');
+    const result = await loggedInvoke<{ contacts: string }>('plugin:contacts|get_contacts');
     return JSON.parse(result.contacts) as DeviceContact[];
   } catch {
     return [];
@@ -492,7 +526,7 @@ export async function checkContactsPermission(): Promise<boolean> {
   }
 
   try {
-    const result = await invoke<{ granted: boolean }>('plugin:contacts|check_permission');
+    const result = await loggedInvoke<{ granted: boolean }>('plugin:contacts|check_permission');
     return result.granted;
   } catch {
     return false;
