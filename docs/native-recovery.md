@@ -57,3 +57,21 @@ Do not uninstall or clear app data. Do not use force-stop as a substitute for di
 ## Limitations
 
 The native crash screen can diagnose more failures but cannot guarantee capture of arbitrary OS kills or native crashes. An Android OS bug report / logcat may still be needed. Android's process-exit reasons are sometimes incomplete, and native logs may not cover crashes very early in startup. Safe mode intentionally disables WhatsApp connection rather than claiming to repair its unknown underlying failure.
+
+
+## Native SIGSEGV confirmation (2026-11-20)
+
+The user's Android 11 report confirms NATIVE_CRASH status=11 (SIGSEGV) at 01:04:01 and 01:04:10. The JS event trail shows send_text_message.start just before the first crash without success or failure. Disabling automatic retry avoided a startup trigger, but manual text sends can still cause a native crash.
+
+Android 11 (API 30) does not expose native tombstones in ApplicationExitInfo.getTraceInputStream() for REASON_CRASH_NATIVE; this capability starts at API 31 (Android 12). For the actual native stack, collect a full system bug report through Settings > Developer options > Take bug report > Full report, or use adb logcat. A full bug report can contain personal data and should be shared only privately after review.
+
+### One-shot native send safety guard
+
+The native send_text_message command now fails closed unless the user explicitly arms exactly one test attempt in the independent Whatsmo Recovery activity. By default **sending is blocked** so repeatedly attempting a known crashing operation cannot abruptly close Whatsmo. Received messages and AI suggestions are unaffected.
+
+1. Open Whatsmo Recovery and tap **Allow one diagnostic send (may crash)**.
+2. Open Whatsmo and send only a test message to your own number. Permission is atomically consumed BEFORE native command processing; further attempts require new authorization.
+3. The native recovery report now includes **NATIVE SEND SAFETY** with the last stage: entered_command, entering_library, returned_success or returned_error.
+4. If the test crashes, reopen Whatsmo Recovery and copy its report. For a precise native stack, also collect a system bug report.
+
+The guard prevents repeated crash loops, but it does not repair the native library or its unknown segmentation fault. Do not allow routine sending until the native stack has been investigated.
