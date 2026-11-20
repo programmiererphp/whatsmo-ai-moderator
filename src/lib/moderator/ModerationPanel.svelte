@@ -26,6 +26,7 @@
 </script>
 {#if items.length}
   <div class="outbox" aria-label="AI message review">
+    <p class="warn">Native sending is protected while investigating an Android crash. Arm one test send in Whatsmo Recovery. Automatic delayed sending is paused.</p>
     {#each items as item (item.id)}
       <div class="draft">
         <div class="heading">
@@ -33,7 +34,7 @@
           <button class="cancel" type="button" on:click={() => cancelDraft(item.id)}>Cancel</button>
         </div>
         {#if item.status === 'scheduled'}
-          <p>Send when app is running, after {new Date(item.dueAt || 0).toLocaleString()}.</p>
+          <p>Scheduled for {new Date(item.dueAt || 0).toLocaleString()}, but automatic dispatch is paused until the native send crash is resolved.</p>
           <button type="button" on:click={() => updateDraft(item.id,{status:'review',dueAt:undefined})}>Edit scheduled message</button>
         {:else if item.status === 'analyzing'}
           <p>Analyzing the recent conversation. Your message has NOT been sent.</p>
@@ -50,10 +51,10 @@
           <div class="controls">
             <button type="button" class="primary" disabled={item.status==='sending'} on:click={() => sendNow(item)}>Send now</button>
             <label><input type="number" min="1" max="10080" bind:value={delayMinutes} aria-label="Delay minutes" /> min</label>
-            <button type="button" disabled={item.status==='sending'} on:click={() => delayed(item)}>Send later</button>
+            <button type="button" disabled>Send later (paused)</button>
           </div>
           {#if item.delayMinutes > 0}
-            <button type="button" class="hint" on:click={() => { delayMinutes=item.delayMinutes; delayed(item); }}>Use AI suggested delay: {item.delayMinutes} min</button>
+            <button type="button" class="hint" disabled>AI suggests waiting {item.delayMinutes} min (scheduling paused)</button>
           {/if}
         {/if}
       </div>
