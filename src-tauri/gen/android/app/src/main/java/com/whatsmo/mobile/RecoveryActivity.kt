@@ -31,6 +31,7 @@ class RecoveryActivity : Activity() {
   private lateinit var reportText: TextView
   private lateinit var statusText: TextView
   private lateinit var modeButton: Button
+  private lateinit var sendGuardButton: Button
   private var report = ""
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +70,21 @@ class RecoveryActivity : Activity() {
       setSafeMode(enabled)
       refresh()
     }
+    sendGuardButton = actionButton(container, "Allow one diagnostic send") {
+      val flag = File(filesDir, "whatsmo-native-send-once.flag")
+      try {
+        if (flag.exists()) flag.delete() else flag.writeText("1")
+        refresh()
+      } catch (error: Exception) {
+        statusText.text = "Could not change send protection: " + error.javaClass.simpleName
+      }
+    }
+    val sendHint = TextView(this)
+    sendHint.text = "Android confirmed SIGSEGV while sending. To prevent repeated crashes, text sending is blocked by default. Enable exactly one diagnostic send only when testing your own account. This may crash Whatsmo; the Recovery screen will remain available."
+    sendHint.textSize = 12f
+    sendHint.setTextColor(Color.LTGRAY)
+    sendHint.setPadding(0, 4, 0, 10)
+    container.addView(sendHint)
     actionButton(container, "Copy diagnostic report") {
       val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
       manager.setPrimaryClip(ClipData.newPlainText("Whatsmo diagnostics", report))
@@ -137,6 +153,9 @@ class RecoveryActivity : Activity() {
   }
 
   private fun refresh() {
+    sendGuardButton.text = if (File(filesDir, "whatsmo-native-send-once.flag").exists()) {
+      "Cancel armed send test"
+    } else "Allow one diagnostic send (may crash)"
     modeButton.text = if (isSafeMode()) "Disable safe mode" else "Enable safe mode"
     statusText.text = if (isSafeMode()) {
       "Safe mode ON: WhatsApp reconnect and background service are disabled."
@@ -177,6 +196,13 @@ class RecoveryActivity : Activity() {
         sb.append("Exit reason unavailable: ").append(error.javaClass.simpleName).append('\n')
       }
     } else sb.append("Requires Android 11+\n")
+
+    sb.append("\n=== NATIVE SEND SAFETY ===\n")
+    sb.append("One-shot send armed: ")
+      .append(File(filesDir, "whatsmo-native-send-once.flag").exists()).append('\n')
+    sb.append("Last native send boundary: ")
+      .append(readTail(File(filesDir, "whatsmo-native-send-stage.log"), 1000))
+      .append('\n')
 
     sb.append("\n=== APPLICATION CRASH LOG ===\n")
     sb.append(readTail(File(filesDir, "whatsmo-android-crash.log"), 24000))
