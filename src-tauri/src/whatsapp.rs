@@ -523,6 +523,7 @@ fn inject_expiration(message: &mut wa::Message, seconds: u32) {
 
 #[tauri::command]
 pub async fn send_text_message(
+    app: AppHandle,
     state: State<'_, WhatsmoState>,
     chat_id: String,
     text: String,
@@ -578,6 +579,12 @@ pub async fn send_text_message(
 
     let message = wrap_ephemeral(inner_message, ephemeral_duration);
 
+    // Android 11 reported repeated SIGSEGV exactly after this call.
+    // Fail closed unless the user explicitly arms one test in the native
+    // Recovery activity. The arm is atomically consumed before entering
+    // the third-party WhatsApp send function.
+    crate::recovery::consume_single_send_arm(&app)?;
+    crate::recovery::record_native_send_stage(&app, "entering_library");
     let began = std::time::Instant::now();
     tracing::info!(
         operation = "send_text_message",
@@ -585,6 +592,10 @@ pub async fn send_text_message(
         "Entering WhatsApp Rust client send"
     );
     let send_result = client.send_message(jid, message).await;
+    crate::recovery::record_native_send_stage(
+        &app,
+        if send_result.is_ok() { "returned_success" } else { "returned_error" }
+    );
     tracing::info!(
         operation = "send_text_message",
         event = "whatsapp_send_completed",
