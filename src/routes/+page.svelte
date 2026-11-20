@@ -84,8 +84,10 @@
       return;
     }
     recordDiagnostic('info', 'recovery', 'normal_mode_starting');
-    scheduledTimer = window.setInterval(() => { void deliverDue(sendApproved); }, 15000);
-    void deliverDue(sendApproved);
+    // Native text sends were confirmed to SIGSEGV on Android 11. Do not
+    // automatically consume a one-shot diagnostic send authorization with a
+    // previously scheduled draft. Scheduled drafts remain stored for review.
+    recordDiagnostic('warn', 'recovery', 'scheduled_outbox_dispatch_paused');
     void requestNotifications();
     void connectBridge({
       onAuth: (payload) => {
