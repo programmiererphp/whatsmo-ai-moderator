@@ -12,7 +12,7 @@
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import DevicesPanel from '$lib/components/DevicesPanel.svelte';
   import type { MediaKind } from '$lib/api/types';
-  import { connectBridge, connectNotificationActions, editMessage } from '$lib/api/whatsmo';
+  import { connectBridge, connectNotificationActions, editMessage, getRecoverySafeMode } from '$lib/api/whatsmo';
   import { recordDiagnostic, recordDiagnosticError } from '$lib/diagnostics/logger';
   import {
     appState,
@@ -50,6 +50,9 @@
   let activeScreen: 'chats' | 'chat' | 'updates' | 'settings' | 'devices' = 'chats';
   let suppressHistoryPush = false;
   let scheduledTimer: number | undefined;
+  let recoverySafeMode = false;
+  let checkingRecovery = true;
+  let disposed = false;
   async function sendApproved(draft: OutboxDraft): Promise<boolean> {
     if (draft.editMessageId) {
       await editMessage(draft.chatId, draft.editMessageId, draft.text);
@@ -63,21 +66,28 @@
 
 
 
-  onMount(() => {
-    scheduledTimer = window.setInterval(() => { void deliverDue(sendApproved); }, 15000);
-    void deliverDue(sendApproved);
-    recordDiagnostic('info', 'ui', 'page_mounted', { screen: activeScreen });
-    window.history.replaceState({ screen: activeScreen }, '');
 
-    const handlePopState = (event: PopStateEvent) => {
-      const state = event.state as { screen?: typeof activeScreen } | null;
-      suppressHistoryPush = true;
-      activeScreen = state?.screen ?? 'chats';
-      recordDiagnostic('info', 'navigation', 'pop_state', { screen: activeScreen });
-      suppressHistoryPush = false;
-    };
-
-    window.addEventListener('popstate', handlePopState);
+  async function initializeMessaging(): Promise<void> {
+    // The native recovery flag is consulted before touching any WhatsApp
+    // network/session/notification bridge or scheduled outbox.
+    try {
+      recoverySafeMode = await getRecoverySafeMode();
+    } catch (error) {
+      recordDiagnosticError('recovery', 'read_safe_mode_failed', error);
+      // Fail closed: preserve diagnostic access, avoid a crash/reconnect loop.
+      recoverySafeMode = true;
+    }
+    checkingRecovery = false;
+    if (disposed) return;
+    if (recoverySafeMode) {
+      recordDiagnostic('warn', 'recovery', 'safe_mode_active');
+      return;
+    }
+    recordDiagnostic('info', 'recovery', 'normal_mode_starting');
+    // Native text sends were confirmed to SIGSEGV on Android 11. Do not
+    // automatically consume a one-shot diagnostic send authorization with a
+    // previously scheduled draft. Scheduled drafts remain stored for review.
+    recordDiagnostic('warn', 'recovery', 'scheduled_outbox_dispatch_paused');
     void requestNotifications();
     void connectBridge({
       onAuth: (payload) => {
@@ -111,8 +121,25 @@
     }).then((cleanup) => {
       notificationActionCleanup = cleanup;
     }).catch((error) => recordDiagnosticError('notifications', 'actions_failed', error));
+  }
+
+  onMount(() => {
+    recordDiagnostic('info', 'ui', 'page_mounted', { screen: activeScreen });
+    window.history.replaceState({ screen: activeScreen }, '');
+
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state as { screen?: typeof activeScreen } | null;
+      suppressHistoryPush = true;
+      activeScreen = state?.screen ?? 'chats';
+      recordDiagnostic('info', 'navigation', 'pop_state', { screen: activeScreen });
+      suppressHistoryPush = false;
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    void initializeMessaging();
 
     return () => {
+      disposed = true;
       window.clearInterval(scheduledTimer);
       recordDiagnostic('info', 'ui', 'page_unmounted');
       window.removeEventListener('popstate', handlePopState);
@@ -211,9 +238,19 @@
 </svelte:head>
 
 <main class="app-stage" data-theme={$appState.theme}>
+  {#if recoverySafeMode}
+    <div class="recovery-banner" role="status">
+      <strong>Recovery safe mode</strong>
+      WhatsApp synchronization and automatic sends are paused. Open the separate
+      <b>Whatsmo Recovery</b> launcher to copy the crash report or disable safe mode.
+    </div>
+  {:else if checkingRecovery}
+    <div class="recovery-banner" role="status">Checking Android recovery mode…</div>
+  {/if}
   <section class="device" aria-label="Whatsmo mobile app">
     {#if activeScreen === 'chat' && $selectedChat}
       <ChatWindow
+        blocked={recoverySafeMode || checkingRecovery}
         chat={$selectedChat}
         contact={$appState.contacts.find((c) => c.id === $selectedChat.id || c.lid === $selectedChat.id) ?? null}
         contacts={$appState.contacts}
@@ -319,6 +356,14 @@
 </main>
 
 <style>
+  .recovery-banner {
+    position:fixed; top:var(--safe-top, 0px); left:8px; right:8px;
+    z-index:90; background:#213c43; color:#fff; border:1px solid #77c1c1;
+    border-radius:12px; padding:10px 12px; font-size:0.77rem;
+    line-height:1.3; box-shadow:0 4px 18px #0005;
+  }
+  .recovery-banner strong { display:block; margin-bottom:3px; }
+
   :global(*) {
     box-sizing: border-box;
   }

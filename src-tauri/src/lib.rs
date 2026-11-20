@@ -1,5 +1,6 @@
 mod contacts;
 mod diagnostics;
+mod recovery;
 mod whatsapp;
 
 use whatsapp::{
@@ -67,6 +68,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             diagnostics::read_native_diagnostics,
+            recovery::get_recovery_safe_mode,
+            recovery::write_js_diagnostics_snapshot,
             start_qr_auth,
             request_pair_code,
             resume_saved_session,

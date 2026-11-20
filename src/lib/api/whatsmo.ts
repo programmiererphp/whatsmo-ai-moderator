@@ -61,6 +61,12 @@ function observedEvent<T>(name: string, handler: (payload: T) => void): (event: 
   };
 }
 
+/** Read the native recovery flag before starting any session or scheduled sends. */
+export async function getRecoverySafeMode(): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return loggedInvoke<boolean>('get_recovery_safe_mode');
+}
+
 export async function readNativeDiagnostics(): Promise<string> {
   if (!isTauriRuntime()) return 'Browser preview; native logs are only available in installed Android app.';
   return loggedInvoke<string>('read_native_diagnostics');

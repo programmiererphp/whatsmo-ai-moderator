@@ -29,6 +29,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Separate launcher activity and process. Works when Tauri or the WebView crashes. -->
+        <activity
+            android:name=".RecoveryActivity"
+            android:exported="true"
+            android:process=":recovery"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:label="Whatsmo Recovery">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".WhatsmoKeepAliveService"
             android:exported="false"

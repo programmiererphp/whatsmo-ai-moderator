@@ -47,7 +47,6 @@ const MAX_PERSISTED_MESSAGES_PER_CHAT = 120;
 const MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_MEDIA_BYTES = 2 * 1024 * 1024;
 const queuedRetryKeys = new Set<string>();
-let queuedRetryTimer: number | undefined;
 let groupMetadataTimer: number | undefined;
 let contactProfileTimer: number | undefined;
 const typingTimers = new Map<string, number>();
@@ -707,7 +706,6 @@ export function setConnection(payload: ConnectionPayload): void {
   }));
 
   if (payload.connected) {
-    scheduleQueuedMessageRetry();
     scheduleGroupMetadataSync();
     scheduleContactProfileSync();
   }
@@ -739,7 +737,6 @@ export function setSessionStatus(payload: SessionStatusPayload): void {
   });
 
   if (payload.connected) {
-    scheduleQueuedMessageRetry();
     scheduleGroupMetadataSync();
     scheduleContactProfileSync();
   }
@@ -776,8 +773,12 @@ export async function resumeSession(): Promise<void> {
     const status = await resumeSavedSession();
     setSessionStatus(status);
     await refreshAccountDevice();
-    await syncKnownGroupMetadata();
-    await syncKnownContactProfiles();
+    // Restoring the session is asynchronous. Sync only if the connection has
+    // actually become ready; otherwise bridge connection events schedule it.
+    if (status.connected) {
+      await syncKnownGroupMetadata();
+      await syncKnownContactProfiles();
+    }
   } catch (error) {
     appState.update((state) => ({
       ...state,
@@ -1089,20 +1090,15 @@ export async function retryMessage(chatId: string, messageId: string): Promise<v
   }
 }
 
-export async function retryQueuedMessages(chatId?: string): Promise<void> {
-  const state = get(appState);
-  const candidates = Object.entries(state.messages)
-    .filter(([candidateChatId]) => !chatId || candidateChatId === chatId)
-    .flatMap(([candidateChatId, chatMessages]) =>
-      chatMessages
-        .filter(isRetryableOutgoingMessage)
-        .map((message) => ({ chatId: candidateChatId, messageId: message.id }))
-    );
-
-  for (const candidate of candidates) {
-    if (isModerated(candidate.chatId)) continue;
-    await retryMessage(candidate.chatId, candidate.messageId);
-  }
+/**
+ * Legacy callers must never resend old messages in bulk. The previous
+ * implementation automatically sent every 'queued' or 'failed' bubble after
+ * reconnect, and repeatedly triggered send_text_message before the observed
+ * Android crash. Delivery state after process termination is ambiguous.
+ * Only the per-bubble Retry button (retryMessage) may trigger another attempt.
+ */
+export async function retryQueuedMessages(_chatId?: string): Promise<void> {
+  recordDiagnostic('warn', 'messaging', 'automatic_retry_blocked');
 }
 
 export async function downloadAttachment(chatId: string, messageId: string): Promise<void> {
@@ -1633,17 +1629,6 @@ function markMessageStatus(chatId: string, localId: string, status: ChatMessage[
   }));
 }
 
-function scheduleQueuedMessageRetry(): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.clearTimeout(queuedRetryTimer);
-  queuedRetryTimer = window.setTimeout(() => {
-    void retryQueuedMessages();
-  }, 800);
-}
-
 function scheduleGroupMetadataSync(groupIds?: string[]): void {
   if (typeof window === 'undefined') {
     return;
@@ -1674,16 +1659,6 @@ function scheduleContactProfileSync(contactIds?: string[]): void {
     pendingProfileSyncIds.clear();
     void syncKnownContactProfiles(ids);
   }, 800);
-}
-
-function isRetryableOutgoingMessage(message: ChatMessage): boolean {
-  return (
-    message.fromMe &&
-    !message.deleted &&
-    typeof message.text === 'string' &&
-    message.text.trim().length > 0 &&
-    (message.status === 'failed' || message.status === 'queued')
-  );
 }
 
 function queueKey(chatId: string, messageId: string): string {
@@ -1729,6 +1704,21 @@ function bytesToDataUrl(bytes: number[], mimeType: string): string {
   return `data:${mimeType};base64,${window.btoa(binary)}`;
 }
 
+/** Make interrupted sends reviewable without changing chat contents or IDs. */
+export function quarantineInterruptedOutgoing(
+  messagesByChat: Record<string, ChatMessage[]>
+): Record<string, ChatMessage[]> {
+  const result: Record<string, ChatMessage[]> = {};
+  for (const [chatId, messages] of Object.entries(messagesByChat)) {
+    result[chatId] = messages.map(message =>
+      message.fromMe && message.status === 'queued'
+        ? { ...message, status: 'failed' }
+        : message
+    );
+  }
+  return result;
+}
+
 function createInitialState(): AppModel {
   const defaultPowerFeatures: import('$lib/api/types').PowerFeatures = {
     antiDelete: false,
@@ -1747,7 +1737,10 @@ function createInitialState(): AppModel {
       account: null,
       historySync: null,
       chats: persisted.chats,
-      messages: persisted.messages,
+      // A 'queued' bubble from a previous process may have reached WhatsApp
+      // just before that process terminated. Never resend it on startup.
+      // Mark it uncertain/failed so the user can inspect it and decide.
+      messages: quarantineInterruptedOutgoing(persisted.messages),
       statuses: persisted.statuses,
       contacts: persisted.contacts,
       groups: persisted.groups,

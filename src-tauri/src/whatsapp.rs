@@ -523,6 +523,7 @@ fn inject_expiration(message: &mut wa::Message, seconds: u32) {
 
 #[tauri::command]
 pub async fn send_text_message(
+    app: AppHandle,
     state: State<'_, WhatsmoState>,
     chat_id: String,
     text: String,
@@ -531,7 +532,21 @@ pub async fn send_text_message(
     quoted_sender: Option<String>,
     quoted_text: Option<String>,
 ) -> CommandResult<OutgoingMessagePayload> {
+    // All manual text send attempts on Android are opt-in and one-shot until
+    // we can identify the native SIGSEGV from a system tombstone.
+    #[cfg(target_os = "android")]
+    {
+        crate::recovery::consume_single_send_arm(&app)?;
+        crate::recovery::record_native_send_stage(&app, "entered_command");
+    }
     let trimmed = text.trim().to_string();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "command_entered",
+        bytes = trimmed.len(),
+        quoted = quoted_message_id.is_some(),
+        "Whatsmo text send invoked (no message content)"
+    );
     if trimmed.is_empty() {
         return Err("Message cannot be empty.".to_string());
     }
@@ -571,9 +586,32 @@ pub async fn send_text_message(
 
     let message = wrap_ephemeral(inner_message, ephemeral_duration);
 
-    let message_id = client
-        .send_message(jid, message)
-        .await
+    // Android 11 reported repeated SIGSEGV exactly after this call.
+    // Fail closed unless the user explicitly arms one test in the native
+    // Recovery activity. The arm is atomically consumed before entering
+    // the third-party WhatsApp send function.
+    #[cfg(target_os = "android")]
+    crate::recovery::record_native_send_stage(&app, "entering_library");
+    let began = std::time::Instant::now();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_started",
+        "Entering WhatsApp Rust client send"
+    );
+    let send_result = client.send_message(jid, message).await;
+    #[cfg(target_os = "android")]
+    crate::recovery::record_native_send_stage(
+        &app,
+        if send_result.is_ok() { "returned_success" } else { "returned_error" }
+    );
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_completed",
+        elapsed_ms = began.elapsed().as_millis() as u64,
+        success = send_result.is_ok(),
+        "WhatsApp Rust client send returned"
+    );
+    let message_id = send_result
         .map_err(|error| format!("Failed to send message: {error}"))?;
 
     Ok(OutgoingMessagePayload {
