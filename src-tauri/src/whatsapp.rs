@@ -532,6 +532,13 @@ pub async fn send_text_message(
     quoted_sender: Option<String>,
     quoted_text: Option<String>,
 ) -> CommandResult<OutgoingMessagePayload> {
+    // All manual text send attempts on Android are opt-in and one-shot until
+    // we can identify the native SIGSEGV from a system tombstone.
+    #[cfg(target_os = "android")]
+    {
+        crate::recovery::consume_single_send_arm(&app)?;
+        crate::recovery::record_native_send_stage(&app, "entered_command");
+    }
     let trimmed = text.trim().to_string();
     tracing::info!(
         operation = "send_text_message",
@@ -583,7 +590,7 @@ pub async fn send_text_message(
     // Fail closed unless the user explicitly arms one test in the native
     // Recovery activity. The arm is atomically consumed before entering
     // the third-party WhatsApp send function.
-    crate::recovery::consume_single_send_arm(&app)?;
+    #[cfg(target_os = "android")]
     crate::recovery::record_native_send_stage(&app, "entering_library");
     let began = std::time::Instant::now();
     tracing::info!(
@@ -592,6 +599,7 @@ pub async fn send_text_message(
         "Entering WhatsApp Rust client send"
     );
     let send_result = client.send_message(jid, message).await;
+    #[cfg(target_os = "android")]
     crate::recovery::record_native_send_stage(
         &app,
         if send_result.is_ok() { "returned_success" } else { "returned_error" }
