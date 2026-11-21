@@ -3,6 +3,7 @@
   import { appState, setChatEphemeralDefault } from '$lib/stores/app';
   import { revokeMessage, editMessage, sendReaction, sendChatPresence, markChatRead } from '$lib/api/whatsmo';
   import ChatComposer from './ChatComposer.svelte';
+  import { shouldSendTypingPresence } from '$lib/utils/typing-presence';
   import ModerationPanel from '$lib/moderator/ModerationPanel.svelte';
   import GameHub from '$lib/games/GameHub.svelte';
   import { moderatedChats, setModerated, queueDraft, type OutboxDraft } from '$lib/moderator/outbox';
@@ -256,7 +257,7 @@
   function handleTyping(): void {
     if (blocked || androidPresenceSuspended) return;
     const now = Date.now();
-    if (now - lastPresenceAt >= 4000) {
+    if (shouldSendTypingPresence(androidPresenceSuspended, blocked, now, lastPresenceAt)) {
       lastPresenceAt = now;
       void sendChatPresence(chat.id, true).catch(() => undefined);
     }
