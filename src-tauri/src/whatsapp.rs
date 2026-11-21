@@ -709,37 +709,51 @@ pub async fn send_chat_presence(
     chat_id: String,
     composing: bool,
 ) -> CommandResult<()> {
-    let client = connected_client(&state).await?;
-    let jid = chat_id
-        .parse::<Jid>()
-        .map_err(|error| format!("Invalid chat id: {error}"))?;
-    if composing {
-        client
-            .chatstate()
-            .send_composing(&jid)
-            .await
-            .map_err(|error| format!("Failed to send composing: {error}"))?;
-    } else {
-        client
-            .chatstate()
-            .send_paused(&jid)
-            .await
-            .map_err(|error| format!("Failed to send paused: {error}"))?;
+    // Receive-only isolation for the Samsung Android 11 SIGSEGV investigation.
+    // The previous frontend sent this native command on EVERY keystroke.
+    // Keep the desktop path unchanged. Do not enter WhatsApp native chatstate
+    // at all on Android until the cause of the segmentation fault is known.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (state, chat_id, composing);
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        let client = connected_client(&state).await?;
+        let jid = chat_id
+            .parse::<Jid>()
+            .map_err(|error| format!("Invalid chat id: {error}"))?;
+        if composing {
+            client.chatstate().send_composing(&jid).await
+                .map_err(|error| format!("Failed to send composing: {error}"))?;
+        } else {
+            client.chatstate().send_paused(&jid).await
+                .map_err(|error| format!("Failed to send paused: {error}"))?;
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
 pub async fn mark_chat_read(state: State<'_, WhatsmoState>, chat_id: String) -> CommandResult<()> {
-    let client = connected_client(&state).await?;
-    let jid = chat_id
-        .parse::<Jid>()
-        .map_err(|error| format!("Invalid chat id: {error}"))?;
-    client
-        .mark_as_read(&jid, None, vec![])
-        .await
-        .map_err(|error| format!("Failed to mark chat read: {error}"))?;
-    Ok(())
+    // Read receipts also invoke a native WhatsApp outgoing operation. Disable
+    // automatically generated native traffic on Android during crash isolation.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (state, chat_id);
+        return Ok(());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let client = connected_client(&state).await?;
+        let jid = chat_id
+            .parse::<Jid>()
+            .map_err(|error| format!("Invalid chat id: {error}"))?;
+        client.mark_as_read(&jid, None, vec![]).await
+            .map_err(|error| format!("Failed to mark chat read: {error}"))?;
+        Ok(())
+    }
 }
 
 #[tauri::command]
