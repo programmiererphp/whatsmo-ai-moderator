@@ -523,6 +523,7 @@ fn inject_expiration(message: &mut wa::Message, seconds: u32) {
 
 #[tauri::command]
 pub async fn send_text_message(
+    app: AppHandle,
     state: State<'_, WhatsmoState>,
     chat_id: String,
     text: String,
@@ -531,7 +532,21 @@ pub async fn send_text_message(
     quoted_sender: Option<String>,
     quoted_text: Option<String>,
 ) -> CommandResult<OutgoingMessagePayload> {
+    // All manual text send attempts on Android are opt-in and one-shot until
+    // we can identify the native SIGSEGV from a system tombstone.
+    #[cfg(target_os = "android")]
+    {
+        crate::recovery::consume_single_send_arm(&app)?;
+        crate::recovery::record_native_send_stage(&app, "entered_command");
+    }
     let trimmed = text.trim().to_string();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "command_entered",
+        bytes = trimmed.len(),
+        quoted = quoted_message_id.is_some(),
+        "Whatsmo text send invoked (no message content)"
+    );
     if trimmed.is_empty() {
         return Err("Message cannot be empty.".to_string());
     }
@@ -571,9 +586,32 @@ pub async fn send_text_message(
 
     let message = wrap_ephemeral(inner_message, ephemeral_duration);
 
-    let message_id = client
-        .send_message(jid, message)
-        .await
+    // Android 11 reported repeated SIGSEGV exactly after this call.
+    // Fail closed unless the user explicitly arms one test in the native
+    // Recovery activity. The arm is atomically consumed before entering
+    // the third-party WhatsApp send function.
+    #[cfg(target_os = "android")]
+    crate::recovery::record_native_send_stage(&app, "entering_library");
+    let began = std::time::Instant::now();
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_started",
+        "Entering WhatsApp Rust client send"
+    );
+    let send_result = client.send_message(jid, message).await;
+    #[cfg(target_os = "android")]
+    crate::recovery::record_native_send_stage(
+        &app,
+        if send_result.is_ok() { "returned_success" } else { "returned_error" }
+    );
+    tracing::info!(
+        operation = "send_text_message",
+        event = "whatsapp_send_completed",
+        elapsed_ms = began.elapsed().as_millis() as u64,
+        success = send_result.is_ok(),
+        "WhatsApp Rust client send returned"
+    );
+    let message_id = send_result
         .map_err(|error| format!("Failed to send message: {error}"))?;
 
     Ok(OutgoingMessagePayload {
@@ -671,37 +709,51 @@ pub async fn send_chat_presence(
     chat_id: String,
     composing: bool,
 ) -> CommandResult<()> {
-    let client = connected_client(&state).await?;
-    let jid = chat_id
-        .parse::<Jid>()
-        .map_err(|error| format!("Invalid chat id: {error}"))?;
-    if composing {
-        client
-            .chatstate()
-            .send_composing(&jid)
-            .await
-            .map_err(|error| format!("Failed to send composing: {error}"))?;
-    } else {
-        client
-            .chatstate()
-            .send_paused(&jid)
-            .await
-            .map_err(|error| format!("Failed to send paused: {error}"))?;
+    // Receive-only isolation for the Samsung Android 11 SIGSEGV investigation.
+    // The previous frontend sent this native command on EVERY keystroke.
+    // Keep the desktop path unchanged. Do not enter WhatsApp native chatstate
+    // at all on Android until the cause of the segmentation fault is known.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (state, chat_id, composing);
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        let client = connected_client(&state).await?;
+        let jid = chat_id
+            .parse::<Jid>()
+            .map_err(|error| format!("Invalid chat id: {error}"))?;
+        if composing {
+            client.chatstate().send_composing(&jid).await
+                .map_err(|error| format!("Failed to send composing: {error}"))?;
+        } else {
+            client.chatstate().send_paused(&jid).await
+                .map_err(|error| format!("Failed to send paused: {error}"))?;
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
 pub async fn mark_chat_read(state: State<'_, WhatsmoState>, chat_id: String) -> CommandResult<()> {
-    let client = connected_client(&state).await?;
-    let jid = chat_id
-        .parse::<Jid>()
-        .map_err(|error| format!("Invalid chat id: {error}"))?;
-    client
-        .mark_as_read(&jid, None, vec![])
-        .await
-        .map_err(|error| format!("Failed to mark chat read: {error}"))?;
-    Ok(())
+    // Read receipts also invoke a native WhatsApp outgoing operation. Disable
+    // automatically generated native traffic on Android during crash isolation.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (state, chat_id);
+        return Ok(());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let client = connected_client(&state).await?;
+        let jid = chat_id
+            .parse::<Jid>()
+            .map_err(|error| format!("Invalid chat id: {error}"))?;
+        client.mark_as_read(&jid, None, vec![]).await
+            .map_err(|error| format!("Failed to mark chat read: {error}"))?;
+        Ok(())
+    }
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@
   import { appState, setChatEphemeralDefault } from '$lib/stores/app';
   import { revokeMessage, editMessage, sendReaction, sendChatPresence, markChatRead } from '$lib/api/whatsmo';
   import ChatComposer from './ChatComposer.svelte';
+  import { shouldSendTypingPresence } from '$lib/utils/typing-presence';
   import ModerationPanel from '$lib/moderator/ModerationPanel.svelte';
   import GameHub from '$lib/games/GameHub.svelte';
   import { moderatedChats, setModerated, queueDraft, type OutboxDraft } from '$lib/moderator/outbox';
@@ -22,6 +23,7 @@
   export let onDownloadMedia: (chatId: string, messageId: string) => void = () => undefined;
   export let onAttach: (chatId: string, file: File) => void;
   export let onDispatch: (draft: OutboxDraft) => Promise<boolean>;
+  export let blocked = false;
 
   const MESSAGE_PAGE_SIZE = 50;
 
@@ -245,11 +247,23 @@
     editingMessage = null;
   }
 
+  // Android 11 is currently in receive-only crash isolation. Typing events
+  // used to enter whatsapp-rust on every keypress; native SIGSEGV persists
+  // even when text send is blocked. Keep chatstate traffic off on Android.
+  const androidPresenceSuspended =
+    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  let lastPresenceAt = 0;
+
   function handleTyping(): void {
-    void sendChatPresence(chat.id, true);
+    if (blocked || androidPresenceSuspended) return;
+    const now = Date.now();
+    if (shouldSendTypingPresence(androidPresenceSuspended, blocked, now, lastPresenceAt)) {
+      lastPresenceAt = now;
+      void sendChatPresence(chat.id, true).catch(() => undefined);
+    }
     window.clearTimeout(typingTimeout);
     typingTimeout = window.setTimeout(() => {
-      void sendChatPresence(chat.id, false);
+      if (!blocked) void sendChatPresence(chat.id, false).catch(() => undefined);
     }, 3000);
   }
 
@@ -300,7 +314,12 @@
           isGroupContinuation={isGroupOther && !isNewSender && showGroupAvatars}
           senderAvatarUrl={showGroupAvatars ? senderContact?.avatarUrl : undefined}
           senderAvatarGradient={showGroupAvatars ? senderContact?.avatarGradient : undefined}
-          onRetry={() => onRetry(chat.id, message.id)}
+          onRetry={() => {
+             if (blocked) return;
+             if (window.confirm('This message may already have reached WhatsApp before the app stopped. Check the other account first. Retry sending it?')) {
+               onRetry(chat.id, message.id);
+             }
+           }}
           onDownloadMedia={() => onDownloadMedia(chat.id, message.id)}
           onOpenMedia={openMedia}
           onLongPress={openContextMenu}
@@ -362,6 +381,11 @@
     {/if}
   </div>
 
+  {#if blocked}
+    <div class="recovery-composer-blocked">
+      Messaging paused in Recovery safe mode. Existing messages remain visible.
+    </div>
+  {:else}
   <ChatComposer
     on:send={(event) => {
       if (editingMessage) {
@@ -379,6 +403,9 @@
     on:attach={(event) => onAttach(chat.id, event.detail)}
     on:typing={handleTyping}
   />
+
+  {/if}
+
 
   {#if timerOpen}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -569,6 +596,11 @@
 </section>
 
 <style>
+  .recovery-composer-blocked {
+    padding:12px 16px max(12px, var(--safe-bottom, 0px));
+    font-size:0.82rem; color:var(--muted); background:var(--paper);
+  }
+
   .chat-extras { min-width:0; width:100%; background:var(--paper); }
   .coach-bar { display:flex;gap:7px;padding:3px 9px;background:var(--paper);border-top:1px solid var(--border-color); }
   .coach-bar button { display:flex;align-items:center;gap:5px;border:0;border-radius:8px;background:var(--border-color);
