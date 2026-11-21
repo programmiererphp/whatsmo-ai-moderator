@@ -246,11 +246,23 @@
     editingMessage = null;
   }
 
+  // Android 11 is currently in receive-only crash isolation. Typing events
+  // used to enter whatsapp-rust on every keypress; native SIGSEGV persists
+  // even when text send is blocked. Keep chatstate traffic off on Android.
+  const androidPresenceSuspended =
+    typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  let lastPresenceAt = 0;
+
   function handleTyping(): void {
-    void sendChatPresence(chat.id, true);
+    if (blocked || androidPresenceSuspended) return;
+    const now = Date.now();
+    if (now - lastPresenceAt >= 4000) {
+      lastPresenceAt = now;
+      void sendChatPresence(chat.id, true).catch(() => undefined);
+    }
     window.clearTimeout(typingTimeout);
     typingTimeout = window.setTimeout(() => {
-      void sendChatPresence(chat.id, false);
+      if (!blocked) void sendChatPresence(chat.id, false).catch(() => undefined);
     }, 3000);
   }
 
