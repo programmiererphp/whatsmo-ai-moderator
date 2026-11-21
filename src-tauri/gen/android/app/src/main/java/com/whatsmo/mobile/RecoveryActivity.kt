@@ -80,7 +80,7 @@ class RecoveryActivity : Activity() {
       }
     }
     val sendHint = TextView(this)
-    sendHint.text = "Android confirmed SIGSEGV while sending. To prevent repeated crashes, text sending is blocked by default. Enable exactly one diagnostic send only when testing your own account. This may crash Whatsmo; the Recovery screen will remain available."
+    sendHint.text = "Android confirmed SIGSEGV while sending. To prevent repeated crashes, text sending is blocked by default. Enable exactly one diagnostic send only when testing your own account. This may crash Whatsmo; the Recovery screen will remain available. Automatic typing presence and read receipts are paused during crash isolation."
     sendHint.textSize = 12f
     sendHint.setTextColor(Color.LTGRAY)
     sendHint.setPadding(0, 4, 0, 10)
@@ -198,6 +198,7 @@ class RecoveryActivity : Activity() {
     } else sb.append("Requires Android 11+\n")
 
     sb.append("\n=== NATIVE SEND SAFETY ===\n")
+    sb.append("Automatic typing presence/read receipts: paused for Android crash isolation\\n")
     sb.append("One-shot send armed: ")
       .append(File(filesDir, "whatsmo-native-send-once.flag").exists()).append('\n')
     sb.append("Last native send boundary: ")
