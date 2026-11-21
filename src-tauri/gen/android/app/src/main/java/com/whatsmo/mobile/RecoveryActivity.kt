@@ -198,7 +198,7 @@ class RecoveryActivity : Activity() {
     } else sb.append("Requires Android 11+\n")
 
     sb.append("\n=== NATIVE SEND SAFETY ===\n")
-    sb.append("Automatic typing presence/read receipts: paused for Android crash isolation\\n")
+    sb.append("Automatic typing presence/read receipts: paused for Android crash isolation\n")
     sb.append("One-shot send armed: ")
       .append(File(filesDir, "whatsmo-native-send-once.flag").exists()).append('\n')
     sb.append("Last native send boundary: ")
